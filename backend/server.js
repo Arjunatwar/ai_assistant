@@ -1,15 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173",
-      "https://aiaissistant.netlify.app"
-    ],
-    credentials: true
-  })
-);
 const OpenAI = require("openai");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
@@ -17,12 +7,10 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
-
+const fs = require("fs");
+const path = require("path");
 require("dotenv").config();
-if (!process.env.JWT_SECRET) {
-  console.error("❌ JWT_SECRET is missing from .env");
-  process.exit(1);
-}
+
 const {
   MailerSend,
   EmailParams,
@@ -30,34 +18,109 @@ const {
   Recipient,
 } = require("mailersend");
 
-const mailerSend = new MailerSend({
-  apiKey: process.env.MAILERSEND_API_KEY,
-});
-function generateOTP() {
-  return crypto.randomInt(100000, 1000000).toString();
-}
-
 // ============================================================
 // CONFIG
 // ============================================================
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
+
+const NODE_ENV =
+  process.env.NODE_ENV || "development";
 
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "http://localhost:5173";
+  process.env.FRONTEND_URL ||
+  "http://localhost:5173";
 
 const JWT_SECRET =
-  process.env.JWT_SECRET || "change-this-secret";
+  process.env.JWT_SECRET;
 
 const MODEL =
-  process.env.AI_MODEL || "agnes-2.5-flash";
+  process.env.AI_MODEL ||
+  "agnes-2.5-flash";
 
 const MAX_HISTORY = 30;
-
 const MAX_IMAGE_COUNT = 4;
 
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET is missing from .env");
+  process.exit(1);
+}
+
+if (!process.env.OPENAI_API_KEY) {
+  console.warn(
+    "⚠️ OPENAI_API_KEY is missing."
+  );
+}
+
+// ============================================================
+// DATABASE PATH
+// ============================================================
+
+// Local:
+// ./data/ai-chat.db
+//
+// Render with persistent disk:
+// /var/data/ai-chat.db
+
+const DB_PATH =
+  process.env.DB_PATH ||
+  path.join(
+    __dirname,
+    "data",
+    "ai-chat.db"
+  );
+
+fs.mkdirSync(
+  path.dirname(DB_PATH),
+  {
+    recursive: true,
+  }
+);
+
+// ============================================================
+// MAILERSEND
+// ============================================================
+
+let mailerSend = null;
+
+if (process.env.MAILERSEND_API_KEY) {
+  mailerSend = new MailerSend({
+    apiKey:
+      process.env.MAILERSEND_API_KEY,
+  });
+} else {
+  console.warn(
+    "⚠️ MAILERSEND_API_KEY is missing. Password reset emails will not work."
+  );
+}
+
+if (!process.env.MAIL_FROM_EMAIL) {
+  console.warn(
+    "⚠️ MAIL_FROM_EMAIL is missing. Password reset emails will not work."
+  );
+}
+
+// ============================================================
+// OPENAI
+// ============================================================
+
+const client = new OpenAI({
+  baseURL:
+    "https://router.bynara.id/v1",
+  apiKey:
+    process.env.OPENAI_API_KEY,
+});
+
+// ============================================================
+// GOOGLE
+// ============================================================
+
+const googleClient =
+  new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID
+  );
 
 // ============================================================
 // MIDDLEWARE
@@ -78,18 +141,18 @@ app.use(
 
 app.use(cookieParser());
 
-
 // ============================================================
 // DATABASE
 // ============================================================
 
-const db = new Database("ai-chat.db");
+const db = new Database(DB_PATH);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
-
-// Users
+// ============================================================
+// USERS TABLE
+// ============================================================
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -111,8 +174,9 @@ db.exec(`
   )
 `);
 
-
-// Chats
+// ============================================================
+// CHATS TABLE
+// ============================================================
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS chats (
@@ -134,8 +198,9 @@ db.exec(`
   )
 `);
 
-
-// Messages
+// ============================================================
+// MESSAGES TABLE
+// ============================================================
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -155,8 +220,35 @@ db.exec(`
   )
 `);
 
+// ============================================================
+// PASSWORD RESET TABLE
+// ============================================================
 
-// Indexes
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_resets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    user_id INTEGER NOT NULL,
+
+    otp_hash TEXT NOT NULL,
+
+    expires_at INTEGER NOT NULL,
+
+    attempts INTEGER DEFAULT 0,
+
+    used INTEGER DEFAULT 0,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id)
+      REFERENCES users(id)
+      ON DELETE CASCADE
+  )
+`);
+
+// ============================================================
+// INDEXES
+// ============================================================
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chats_user
@@ -167,22 +259,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_chat
   ON messages(chat_id)
 `);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS password_resets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    otp_hash TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    attempts INTEGER DEFAULT 0,
-    used INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id)
-      REFERENCES users(id)
-      ON DELETE CASCADE
-  )
-`);
-
 
 // ============================================================
 // DEFAULT ADMIN
@@ -200,11 +276,13 @@ async function createDefaultAdmin() {
 
     if (!existingAdmin) {
       const passwordHash =
-        await bcrypt.hash("admin@123", 12);
+        await bcrypt.hash(
+          "admin@123",
+          12
+        );
 
       db.prepare(`
-        INSERT INTO users
-        (
+        INSERT INTO users (
           username,
           name,
           password_hash,
@@ -218,6 +296,9 @@ async function createDefaultAdmin() {
         "local"
       );
 
+      console.log(
+        "✅ Default admin account created."
+      );
     }
   } catch (error) {
     console.error(
@@ -227,34 +308,22 @@ async function createDefaultAdmin() {
   }
 }
 
-
-// ============================================================
-// OPENAI CLIENT
-// ============================================================
-
-const client = new OpenAI({
-  baseURL: "https://router.bynara.id/v1",
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-
-// ============================================================
-// GOOGLE
-// ============================================================
-
-const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID
-);
-
-
 // ============================================================
 // HELPERS
 // ============================================================
 
+function generateOTP() {
+  return crypto
+    .randomInt(
+      100000,
+      1000000
+    )
+    .toString();
+}
+
 function generateId() {
   return crypto.randomUUID();
 }
-
 
 function createToken(user) {
   return jwt.sign(
@@ -268,18 +337,68 @@ function createToken(user) {
   );
 }
 
+// ============================================================
+// AUTH COOKIE
+// ============================================================
 
-function setAuthCookie(res, token) {
-  res.cookie("auth_token", token, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "none",
-  maxAge: 7 * 24 * 60 * 60 * 1000
-});
+function setAuthCookie(
+  res,
+  token
+) {
+  const isProduction =
+    NODE_ENV === "production";
+
+  res.cookie(
+    "auth_token",
+    token,
+    {
+      httpOnly: true,
+
+      sameSite:
+        isProduction
+          ? "none"
+          : "lax",
+
+      secure:
+        isProduction,
+
+      maxAge:
+        7 *
+        24 *
+        60 *
+        60 *
+        1000,
+    }
+  );
 }
 
+function clearAuthCookie(res) {
+  const isProduction =
+    NODE_ENV === "production";
 
-function getUserById(userId) {
+  res.clearCookie(
+    "auth_token",
+    {
+      httpOnly: true,
+
+      sameSite:
+        isProduction
+          ? "none"
+          : "lax",
+
+      secure:
+        isProduction,
+    }
+  );
+}
+
+// ============================================================
+// USER HELPERS
+// ============================================================
+
+function getUserById(
+  userId
+) {
   return db
     .prepare(`
       SELECT
@@ -295,8 +414,10 @@ function getUserById(userId) {
     .get(userId);
 }
 
-
-function getUserChat(chatId, userId) {
+function getUserChat(
+  chatId,
+  userId
+) {
   return db
     .prepare(`
       SELECT *
@@ -304,11 +425,15 @@ function getUserChat(chatId, userId) {
       WHERE id = ?
       AND user_id = ?
     `)
-    .get(chatId, userId);
+    .get(
+      chatId,
+      userId
+    );
 }
 
-
-function getChatMessages(chatId) {
+function getChatMessages(
+  chatId
+) {
   return db
     .prepare(`
       SELECT
@@ -324,6 +449,9 @@ function getChatMessages(chatId) {
     .all(chatId);
 }
 
+// ============================================================
+// SAVE MESSAGE
+// ============================================================
 
 function saveMessage(
   chatId,
@@ -332,14 +460,18 @@ function saveMessage(
 ) {
   const result = db
     .prepare(`
-      INSERT INTO messages
-      (
+      INSERT INTO messages (
         chat_id,
         role,
         content,
         created_at
       )
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP
+      )
     `)
     .run(
       chatId,
@@ -349,23 +481,38 @@ function saveMessage(
 
   db.prepare(`
     UPDATE chats
-    SET updated_at = CURRENT_TIMESTAMP
+    SET updated_at =
+      CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(chatId);
 
   return result.lastInsertRowid;
 }
 
+// ============================================================
+// AI TEXT HELPERS
+// ============================================================
+
 function cleanAiText(text) {
-  if (!text) return "";
+  if (!text) {
+    return "";
+  }
 
   return text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
+    .replace(
+      /^```json\s*/i,
+      ""
+    )
+    .replace(
+      /^```\s*/i,
+      ""
+    )
+    .replace(
+      /\s*```$/i,
+      ""
+    )
     .trim();
 }
-
 
 function parseJsonResponse(text) {
   const cleaned =
@@ -374,7 +521,6 @@ function parseJsonResponse(text) {
   try {
     return JSON.parse(cleaned);
   } catch {
-    // Try extracting JSON object
     const start =
       cleaned.indexOf("{");
 
@@ -386,15 +532,13 @@ function parseJsonResponse(text) {
       end !== -1 &&
       end > start
     ) {
-      const possibleJson =
+      const json =
         cleaned.slice(
           start,
           end + 1
         );
 
-      return JSON.parse(
-        possibleJson
-      );
+      return JSON.parse(json);
     }
 
     throw new Error(
@@ -403,10 +547,8 @@ function parseJsonResponse(text) {
   }
 }
 
-
 // ============================================================
-// IMPORTANT:
-// BUILD USER CONTENT CORRECTLY
+// BUILD USER CONTENT
 // ============================================================
 
 function buildUserContent(
@@ -417,36 +559,27 @@ function buildUserContent(
     Array.isArray(images)
       ? images.filter(
           (image) =>
-            typeof image === "string" &&
-            image.startsWith("data:image/")
+            typeof image ===
+              "string" &&
+            image.startsWith(
+              "data:image/"
+            )
         )
       : [];
 
-
-  // ----------------------------------------------------------
-  // TEXT ONLY
-  // ----------------------------------------------------------
-  //
-  // THIS IS THE IMPORTANT FIX.
-  //
-  // We return a STRING.
-  //
-  // We do NOT create image_url here.
-  //
-
-  if (validImages.length === 0) {
+  // Text only
+  if (
+    validImages.length === 0
+  ) {
     return text || "";
   }
 
-
-  // ----------------------------------------------------------
-  // IMAGE REQUEST
-  // ----------------------------------------------------------
-
   const content = [];
 
-
-  if (text && text.trim()) {
+  if (
+    text &&
+    text.trim()
+  ) {
     content.push({
       type: "text",
       text: text.trim(),
@@ -454,10 +587,10 @@ function buildUserContent(
   } else {
     content.push({
       type: "text",
-      text: "Please analyze the uploaded image.",
+      text:
+        "Please analyze the uploaded image.",
     });
   }
-
 
   for (
     const image of validImages.slice(
@@ -467,20 +600,17 @@ function buildUserContent(
   ) {
     content.push({
       type: "image_url",
-
       image_url: {
         url: image,
       },
     });
   }
 
-
   return content;
 }
 
-
 // ============================================================
-// AUTHENTICATION MIDDLEWARE
+// AUTH MIDDLEWARE
 // ============================================================
 
 function authenticate(
@@ -489,16 +619,15 @@ function authenticate(
   next
 ) {
   try {
-
     const token =
       req.cookies.auth_token;
 
     if (!token) {
       return res.status(401).json({
-        error: "Not authenticated",
+        error:
+          "Not authenticated",
       });
     }
-
 
     const decoded =
       jwt.verify(
@@ -506,49 +635,41 @@ function authenticate(
         JWT_SECRET
       );
 
-
     const user =
       getUserById(
         decoded.userId
       );
 
-
     if (!user) {
       return res.status(401).json({
-        error: "User not found",
+        error:
+          "User not found",
       });
     }
-
 
     req.user = user;
 
     next();
-
   } catch (error) {
-
     return res.status(401).json({
-      error: "Invalid or expired session",
+      error:
+        "Invalid or expired session",
     });
-
   }
 }
 
-
 // ============================================================
-// AUTH - LOGIN
+// LOGIN
 // ============================================================
 
 app.post(
   "/api/auth/login",
   async (req, res) => {
-
     try {
-
       const {
         username,
         password,
-      } = req.body;
-
+      } = req.body || {};
 
       if (
         !username ||
@@ -560,22 +681,18 @@ app.post(
         });
       }
 
-
       const cleanUsername =
-        username
+        String(username)
           .trim()
           .toLowerCase();
 
-
-      const user =
-        db
-          .prepare(`
-            SELECT *
-            FROM users
-            WHERE username = ?
-          `)
-          .get(cleanUsername);
-
+      const user = db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE username = ?
+        `)
+        .get(cleanUsername);
 
       if (!user) {
         return res.status(401).json({
@@ -584,7 +701,6 @@ app.post(
         });
       }
 
-
       if (!user.password_hash) {
         return res.status(401).json({
           error:
@@ -592,13 +708,11 @@ app.post(
         });
       }
 
-
       const valid =
         await bcrypt.compare(
           password,
           user.password_hash
         );
-
 
       if (!valid) {
         return res.status(401).json({
@@ -607,535 +721,670 @@ app.post(
         });
       }
 
-
       const token =
         createToken(user);
-
 
       setAuthCookie(
         res,
         token
       );
 
-
-      res.json({
+      return res.json({
         user: {
           id: user.id,
-          username: user.username,
+          username:
+            user.username,
           email: user.email,
           name: user.name,
-          provider: user.provider,
+          provider:
+            user.provider,
         },
       });
-
     } catch (error) {
-
       console.error(
-        "Login error:",
+        "LOGIN ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Login failed",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// AUTH - REGISTER
+// REGISTER
 // ============================================================
 
-app.post("/api/auth/register", async (req, res) => {
-  try {
+app.post(
+  "/api/auth/register",
+  async (req, res) => {
+    try {
+      const {
+        username,
+        password,
+        name,
+        email,
+      } = req.body || {};
 
-    const { username, password, name, email } = req.body || {};
-
-    if (!username || !password || !name) {
-      return res.status(400).json({
-        error: "Name, username and password are required.",
-      });
-    }
-
-    const cleanUsername = String(username).trim();
-    const cleanName = String(name).trim();
-    const cleanEmail = email
-      ? String(email).trim().toLowerCase()
-      : null;
-
-    // Reserved admin username
-    if (cleanUsername.toLowerCase() === "admin") {
-      return res.status(400).json({
-        error: "This username is reserved.",
-      });
-    }
-
-    if (cleanUsername.length < 3) {
-      return res.status(400).json({
-        error: "Username must be at least 3 characters.",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
-        error: "Password must be at least 6 characters.",
-      });
-    }
-
-    // Check username
-    const existingUsername = db
-      .prepare("SELECT id, username FROM users WHERE username = ?")
-      .get(cleanUsername);
-
-    if (existingUsername) {
-      return res.status(409).json({
-        error: "Username already exists.",
-      });
-    }
-
-    // Check email only if provided
-    if (cleanEmail) {
-      const existingEmail = db
-        .prepare("SELECT id, email FROM users WHERE email = ?")
-        .get(cleanEmail);
-
-      if (existingEmail) {
-        return res.status(409).json({
-          error: "Email already exists.",
+      if (
+        !username ||
+        !password ||
+        !name
+      ) {
+        return res.status(400).json({
+          error:
+            "Name, username and password are required.",
         });
       }
-    }
 
-    // Hash password
-    const passwordHash = await bcrypt.hash(password, 12);
+      const cleanUsername =
+        String(username)
+          .trim()
+          .toLowerCase();
 
-    // Create user
-    const result = db
-      .prepare(`
-        INSERT INTO users (
-          username,
-          email,
-          name,
-          password_hash,
-          provider,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, 'local', CURRENT_TIMESTAMP)
-      `)
-      .run(
-        cleanUsername,
-        cleanEmail,
-        cleanName,
-        passwordHash
+      const cleanName =
+        String(name).trim();
+
+      const cleanEmail =
+        email
+          ? String(email)
+              .trim()
+              .toLowerCase()
+          : null;
+
+      if (
+        cleanUsername ===
+        "admin"
+      ) {
+        return res.status(400).json({
+          error:
+            "This username is reserved.",
+        });
+      }
+
+      if (
+        cleanUsername.length < 3
+      ) {
+        return res.status(400).json({
+          error:
+            "Username must be at least 3 characters.",
+        });
+      }
+
+      if (
+        password.length < 6
+      ) {
+        return res.status(400).json({
+          error:
+            "Password must be at least 6 characters.",
+        });
+      }
+
+      const existingUsername =
+        db
+          .prepare(`
+            SELECT id
+            FROM users
+            WHERE username = ?
+          `)
+          .get(cleanUsername);
+
+      if (existingUsername) {
+        return res.status(409).json({
+          error:
+            "Username already exists.",
+        });
+      }
+
+      if (cleanEmail) {
+        const existingEmail =
+          db
+            .prepare(`
+              SELECT id
+              FROM users
+              WHERE email = ?
+            `)
+            .get(cleanEmail);
+
+        if (existingEmail) {
+          return res.status(409).json({
+            error:
+              "Email already exists.",
+          });
+        }
+      }
+
+      const passwordHash =
+        await bcrypt.hash(
+          password,
+          12
+        );
+
+      const result =
+        db.prepare(`
+          INSERT INTO users (
+            username,
+            email,
+            name,
+            password_hash,
+            provider,
+            created_at
+          )
+          VALUES (
+            ?,
+            ?,
+            ?,
+            ?,
+            'local',
+            CURRENT_TIMESTAMP
+          )
+        `).run(
+          cleanUsername,
+          cleanEmail,
+          cleanName,
+          passwordHash
+        );
+
+      const user =
+        getUserById(
+          result.lastInsertRowid
+        );
+
+      const token =
+        createToken(user);
+
+      setAuthCookie(
+        res,
+        token
       );
 
-    const user = db
-      .prepare(`
-        SELECT
-          id,
-          username,
-          email,
-          name,
-          provider,
-          created_at
-        FROM users
-        WHERE id = ?
-      `)
-      .get(result.lastInsertRowid);
-
-    // Create JWT
-    const token = jwt.sign(
-      {
-        id: user.id,
-        username: user.username,
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "7d",
-      }
-    );
-
-    // Save JWT in cookie
-    res.cookie("auth_token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    return res.status(201).json({
-      message: "Account created successfully.",
-      user,
-    });
-
-  } catch (error) {
-    console.error("REGISTER ERROR:", error);
-
-    if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
-      return res.status(409).json({
-        error: "Username or email already exists.",
-      });
-    }
-
-    return res.status(500).json({
-      error: error.message || "Failed to create account.",
-    });
-  }
-});
-
-app.post("/api/auth/forgot-password", async (req, res) => {
-  try {
-    const { email } = req.body || {};
-
-    if (!email) {
-      return res.status(400).json({
-        error: "Email is required.",
-      });
-    }
-
-    const cleanEmail = String(email).trim().toLowerCase();
-
-    const user = db
-      .prepare(`
-        SELECT id, name, email
-        FROM users
-        WHERE LOWER(email) = ?
-        AND provider = 'local'
-      `)
-      .get(cleanEmail);
-
-    // Don't reveal whether an email exists
-    if (!user) {
-      return res.json({
+      return res.status(201).json({
         message:
-          "If an account exists with this email, an OTP has been sent.",
+          "Account created successfully.",
+        user,
+      });
+    } catch (error) {
+      console.error(
+        "REGISTER ERROR:",
+        error
+      );
+
+      if (
+        error.code ===
+        "SQLITE_CONSTRAINT_UNIQUE"
+      ) {
+        return res.status(409).json({
+          error:
+            "Username or email already exists.",
+        });
+      }
+
+      return res.status(500).json({
+        error:
+          "Failed to create account.",
       });
     }
+  }
+);
 
-    // Delete old OTPs
-    db.prepare(`
-      DELETE FROM password_resets
-      WHERE user_id = ?
-    `).run(user.id);
+// ============================================================
+// FORGOT PASSWORD - SEND OTP
+// ============================================================
 
-    // Generate OTP
-    const otp = generateOTP();
+app.post(
+  "/api/auth/forgot-password",
+  async (req, res) => {
+    try {
+      const { email } =
+        req.body || {};
 
-    // Hash OTP before storing
-    const otpHash = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
+      if (!email) {
+        return res.status(400).json({
+          error:
+            "Email is required.",
+        });
+      }
 
-    // 10 minutes
-    const expiresAt =
-      Date.now() + 10 * 60 * 1000;
+      if (!mailerSend) {
+        return res.status(500).json({
+          error:
+            "Email service is not configured.",
+        });
+      }
 
-    db.prepare(`
-      INSERT INTO password_resets (
-        user_id,
-        otp_hash,
-        expires_at,
-        attempts,
-        used
-      )
-      VALUES (?, ?, ?, 0, 0)
-    `).run(
-      user.id,
-      otpHash,
-      expiresAt
-    );
+      if (
+        !process.env
+          .MAIL_FROM_EMAIL
+      ) {
+        return res.status(500).json({
+          error:
+            "MAIL_FROM_EMAIL is not configured.",
+        });
+      }
 
-    // Email
-    const sentFrom = new Sender(
-      process.env.MAIL_FROM_EMAIL,
-      process.env.MAIL_FROM_NAME || "AI Chat"
-    );
+      const cleanEmail =
+        String(email)
+          .trim()
+          .toLowerCase();
 
-    const recipients = [
-      new Recipient(
-        user.email,
-        user.name || "User"
-      ),
-    ];
+      const user =
+        db
+          .prepare(`
+            SELECT
+              id,
+              name,
+              email
+            FROM users
+            WHERE LOWER(email) = ?
+            AND provider = 'local'
+          `)
+          .get(cleanEmail);
 
-    const emailParams = new EmailParams()
-      .setFrom(sentFrom)
-      .setTo(recipients)
-      .setSubject("Your AI Chat password reset OTP")
-      .setHtml(`
-        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto;">
-          <h2>Password Reset</h2>
+      // Do not reveal whether
+      // the email exists.
+      if (!user) {
+        return res.json({
+          message:
+            "If an account exists with this email, an OTP has been sent.",
+        });
+      }
 
-          <p>Hello ${user.name || "there"},</p>
+      db.prepare(`
+        DELETE FROM password_resets
+        WHERE user_id = ?
+      `).run(user.id);
 
-          <p>
-            We received a request to reset your AI Chat password.
-          </p>
+      const otp =
+        generateOTP();
 
-          <div style="
-            font-size: 32px;
-            font-weight: bold;
-            letter-spacing: 8px;
-            padding: 20px;
-            text-align: center;
-            background: #f3f4f6;
-            border-radius: 10px;
-            margin: 20px 0;
-          ">
-            ${otp}
-          </div>
+      const otpHash =
+        crypto
+          .createHash("sha256")
+          .update(otp)
+          .digest("hex");
 
-          <p>
-            This OTP will expire in <strong>10 minutes</strong>.
-          </p>
+      const expiresAt =
+        Date.now() +
+        10 * 60 * 1000;
 
-          <p>
-            If you did not request a password reset,
-            you can safely ignore this email.
-          </p>
+      db.prepare(`
+        INSERT INTO password_resets (
+          user_id,
+          otp_hash,
+          expires_at,
+          attempts,
+          used
+        )
+        VALUES (?, ?, ?, 0, 0)
+      `).run(
+        user.id,
+        otpHash,
+        expiresAt
+      );
 
-          <p>— AI Chat</p>
-        </div>
-      `)
-      .setText(`
+      const sender =
+        new Sender(
+          process.env
+            .MAIL_FROM_EMAIL,
+          process.env
+            .MAIL_FROM_NAME ||
+            "AI Chat"
+        );
+
+      const recipients = [
+        new Recipient(
+          user.email,
+          user.name ||
+            "User"
+        ),
+      ];
+
+      const emailParams =
+        new EmailParams()
+          .setFrom(sender)
+          .setTo(recipients)
+          .setSubject(
+            "Your AI Chat password reset OTP"
+          )
+          .setHtml(`
+            <div style="
+              font-family: Arial, sans-serif;
+              max-width: 500px;
+              margin: auto;
+            ">
+              <h2>Password Reset</h2>
+
+              <p>
+                Hello ${
+                  user.name ||
+                  "there"
+                },
+              </p>
+
+              <p>
+                We received a request to reset
+                your AI Chat password.
+              </p>
+
+              <div style="
+                font-size: 32px;
+                font-weight: bold;
+                letter-spacing: 8px;
+                padding: 20px;
+                text-align: center;
+                background: #f3f4f6;
+                border-radius: 10px;
+                margin: 20px 0;
+              ">
+                ${otp}
+              </div>
+
+              <p>
+                This OTP will expire in
+                <strong>10 minutes</strong>.
+              </p>
+
+              <p>
+                If you did not request a
+                password reset, ignore this email.
+              </p>
+
+              <p>— AI Chat</p>
+            </div>
+          `)
+          .setText(`
 Your AI Chat password reset OTP is: ${otp}
 
 This OTP will expire in 10 minutes.
 
-If you did not request this password reset, ignore this email.
-      `);
+If you did not request this password reset,
+ignore this email.
+          `);
 
-    await mailerSend.email.send(emailParams);
+      await mailerSend.email.send(
+        emailParams
+      );
 
-    return res.json({
-      message:
-        "If an account exists with this email, an OTP has been sent.",
-    });
+      return res.json({
+        message:
+          "If an account exists with this email, an OTP has been sent.",
+      });
+    } catch (error) {
+      console.error(
+        "FORGOT PASSWORD ERROR:",
+        error
+      );
 
-  } catch (error) {
-    console.error(
-      "FORGOT PASSWORD ERROR:",
-      error
-    );
-
-    return res.status(500).json({
-      error: "Failed to send OTP.",
-    });
+      return res.status(500).json({
+        error:
+          "Failed to send OTP.",
+      });
+    }
   }
-});
-app.post("/api/auth/verify-otp", async (req, res) => {
-  try {
-    const { email, otp } = req.body || {};
+);
 
-    if (!email || !otp) {
-      return res.status(400).json({
-        error: "Email and OTP are required.",
-      });
-    }
+// ============================================================
+// VERIFY OTP
+// ============================================================
 
-    const cleanEmail = String(email)
-      .trim()
-      .toLowerCase();
+app.post(
+  "/api/auth/verify-otp",
+  async (req, res) => {
+    try {
+      const {
+        email,
+        otp,
+      } = req.body || {};
 
-    const user = db
-      .prepare(`
-        SELECT id
-        FROM users
-        WHERE LOWER(email) = ?
-        AND provider = 'local'
-      `)
-      .get(cleanEmail);
+      if (
+        !email ||
+        !otp
+      ) {
+        return res.status(400).json({
+          error:
+            "Email and OTP are required.",
+        });
+      }
 
-    if (!user) {
-      return res.status(400).json({
-        error: "Invalid OTP.",
-      });
-    }
+      const cleanEmail =
+        String(email)
+          .trim()
+          .toLowerCase();
 
-    const reset = db
-      .prepare(`
-        SELECT *
-        FROM password_resets
-        WHERE user_id = ?
-        AND used = 0
-        ORDER BY id DESC
-        LIMIT 1
-      `)
-      .get(user.id);
+      const user =
+        db
+          .prepare(`
+            SELECT id
+            FROM users
+            WHERE LOWER(email) = ?
+            AND provider = 'local'
+          `)
+          .get(cleanEmail);
 
-    if (!reset) {
-      return res.status(400).json({
-        error: "OTP is invalid or expired.",
-      });
-    }
+      if (!user) {
+        return res.status(400).json({
+          error:
+            "Invalid OTP.",
+        });
+      }
 
-    if (Date.now() > reset.expires_at) {
-      return res.status(400).json({
-        error: "OTP has expired.",
-      });
-    }
+      const reset =
+        db
+          .prepare(`
+            SELECT *
+            FROM password_resets
+            WHERE user_id = ?
+            AND used = 0
+            ORDER BY id DESC
+            LIMIT 1
+          `)
+          .get(user.id);
 
-    if (reset.attempts >= 5) {
-      return res.status(429).json({
-        error: "Too many incorrect attempts.",
-      });
-    }
+      if (!reset) {
+        return res.status(400).json({
+          error:
+            "OTP is invalid or expired.",
+        });
+      }
 
-    const otpHash = crypto
-      .createHash("sha256")
-      .update(String(otp).trim())
-      .digest("hex");
+      if (
+        Date.now() >
+        reset.expires_at
+      ) {
+        return res.status(400).json({
+          error:
+            "OTP has expired.",
+        });
+      }
 
-    if (otpHash !== reset.otp_hash) {
+      if (
+        reset.attempts >= 5
+      ) {
+        return res.status(429).json({
+          error:
+            "Too many incorrect attempts.",
+        });
+      }
+
+      const otpHash =
+        crypto
+          .createHash("sha256")
+          .update(
+            String(otp).trim()
+          )
+          .digest("hex");
+
+      if (
+        otpHash !==
+        reset.otp_hash
+      ) {
+        db.prepare(`
+          UPDATE password_resets
+          SET attempts =
+            attempts + 1
+          WHERE id = ?
+        `).run(reset.id);
+
+        return res.status(400).json({
+          error:
+            "Invalid OTP.",
+        });
+      }
+
       db.prepare(`
         UPDATE password_resets
-        SET attempts = attempts + 1
+        SET used = 1
         WHERE id = ?
       `).run(reset.id);
 
-      return res.status(400).json({
-        error: "Invalid OTP.",
+      return res.json({
+        message:
+          "OTP verified successfully.",
+        verified: true,
       });
-    }
+    } catch (error) {
+      console.error(
+        "VERIFY OTP ERROR:",
+        error
+      );
 
-    // Mark OTP as used
-    db.prepare(`
-      UPDATE password_resets
-      SET used = 1
-      WHERE id = ?
-    `).run(reset.id);
-
-    return res.json({
-      message: "OTP verified successfully.",
-      verified: true,
-    });
-
-  } catch (error) {
-    console.error(
-      "VERIFY OTP ERROR:",
-      error
-    );
-
-    return res.status(500).json({
-      error: "Failed to verify OTP.",
-    });
-  }
-});
-app.post("/api/auth/reset-password", async (req, res) => {
-  try {
-    const {
-      email,
-      password,
-    } = req.body || {};
-
-    if (!email || !password) {
-      return res.status(400).json({
-        error: "Email and new password are required.",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
+      return res.status(500).json({
         error:
-          "Password must be at least 6 characters.",
+          "Failed to verify OTP.",
       });
     }
-
-    const cleanEmail = String(email)
-      .trim()
-      .toLowerCase();
-
-    const user = db
-      .prepare(`
-        SELECT id
-        FROM users
-        WHERE LOWER(email) = ?
-        AND provider = 'local'
-      `)
-      .get(cleanEmail);
-
-    if (!user) {
-      return res.status(400).json({
-        error: "Unable to reset password.",
-      });
-    }
-
-    // Make sure an OTP was successfully verified
-    const verifiedReset = db
-      .prepare(`
-        SELECT id
-        FROM password_resets
-        WHERE user_id = ?
-        AND used = 1
-        AND expires_at > ?
-        ORDER BY id DESC
-        LIMIT 1
-      `)
-      .get(user.id, Date.now());
-
-    if (!verifiedReset) {
-      return res.status(400).json({
-        error:
-          "Please verify your OTP first.",
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(
-      password,
-      12
-    );
-
-    db.prepare(`
-      UPDATE users
-      SET password_hash = ?
-      WHERE id = ?
-    `).run(
-      passwordHash,
-      user.id
-    );
-
-    // Delete reset records
-    db.prepare(`
-      DELETE FROM password_resets
-      WHERE user_id = ?
-    `).run(user.id);
-
-    return res.json({
-      message:
-        "Password reset successfully.",
-    });
-
-  } catch (error) {
-    console.error(
-      "RESET PASSWORD ERROR:",
-      error
-    );
-
-    return res.status(500).json({
-      error: "Failed to reset password.",
-    });
   }
-});
+);
 
 // ============================================================
-// AUTH - GOOGLE
+// RESET PASSWORD
+// ============================================================
+
+app.post(
+  "/api/auth/reset-password",
+  async (req, res) => {
+    try {
+      const {
+        email,
+        password,
+      } = req.body || {};
+
+      if (
+        !email ||
+        !password
+      ) {
+        return res.status(400).json({
+          error:
+            "Email and new password are required.",
+        });
+      }
+
+      if (
+        password.length < 6
+      ) {
+        return res.status(400).json({
+          error:
+            "Password must be at least 6 characters.",
+        });
+      }
+
+      const cleanEmail =
+        String(email)
+          .trim()
+          .toLowerCase();
+
+      const user =
+        db
+          .prepare(`
+            SELECT id
+            FROM users
+            WHERE LOWER(email) = ?
+            AND provider = 'local'
+          `)
+          .get(cleanEmail);
+
+      if (!user) {
+        return res.status(400).json({
+          error:
+            "Unable to reset password.",
+        });
+      }
+
+      const verifiedReset =
+        db
+          .prepare(`
+            SELECT id
+            FROM password_resets
+            WHERE user_id = ?
+            AND used = 1
+            AND expires_at > ?
+            ORDER BY id DESC
+            LIMIT 1
+          `)
+          .get(
+            user.id,
+            Date.now()
+          );
+
+      if (!verifiedReset) {
+        return res.status(400).json({
+          error:
+            "Please verify your OTP first.",
+        });
+      }
+
+      const passwordHash =
+        await bcrypt.hash(
+          password,
+          12
+        );
+
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?
+        WHERE id = ?
+      `).run(
+        passwordHash,
+        user.id
+      );
+
+      db.prepare(`
+        DELETE FROM password_resets
+        WHERE user_id = ?
+      `).run(user.id);
+
+      return res.json({
+        message:
+          "Password reset successfully.",
+      });
+    } catch (error) {
+      console.error(
+        "RESET PASSWORD ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          "Failed to reset password.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// GOOGLE LOGIN
 // ============================================================
 
 app.post(
   "/api/auth/google",
   async (req, res) => {
-
     try {
-
       const {
         credential,
-      } = req.body;
-
+      } = req.body || {};
 
       if (!credential) {
         return res.status(400).json({
@@ -1144,19 +1393,28 @@ app.post(
         });
       }
 
+      if (
+        !process.env
+          .GOOGLE_CLIENT_ID
+      ) {
+        return res.status(500).json({
+          error:
+            "Google login is not configured.",
+        });
+      }
 
       const ticket =
         await googleClient.verifyIdToken({
-          idToken: credential,
+          idToken:
+            credential,
 
           audience:
-            process.env.GOOGLE_CLIENT_ID,
+            process.env
+              .GOOGLE_CLIENT_ID,
         });
-
 
       const payload =
         ticket.getPayload();
-
 
       if (!payload) {
         return res.status(401).json({
@@ -1164,7 +1422,6 @@ app.post(
             "Invalid Google credential",
         });
       }
-
 
       const googleId =
         payload.sub;
@@ -1177,7 +1434,6 @@ app.post(
         payload.name ||
         "Google User";
 
-
       let user =
         db
           .prepare(`
@@ -1187,34 +1443,31 @@ app.post(
           `)
           .get(googleId);
 
-
-      // -------------------------------------------------------
-      // Existing account by email
-      // -------------------------------------------------------
-
-      if (!user && email) {
-
+      // Existing account
+      if (
+        !user &&
+        email
+      ) {
         user =
           db
             .prepare(`
               SELECT *
               FROM users
-              WHERE email = ?
+              WHERE LOWER(email) = ?
             `)
-            .get(email);
-
+            .get(
+              email.toLowerCase()
+            );
 
         if (user) {
-
           db.prepare(`
             UPDATE users
             SET
               google_id = ?,
-              provider = ?
+              provider = 'google'
             WHERE id = ?
           `).run(
             googleId,
-            "google",
             user.id
           );
 
@@ -1222,18 +1475,11 @@ app.post(
             getUserById(
               user.id
             );
-
         }
-
       }
 
-
-      // -------------------------------------------------------
       // New Google account
-      // -------------------------------------------------------
-
       if (!user) {
-
         let username =
           email
             ? email
@@ -1242,15 +1488,16 @@ app.post(
                   /[^a-zA-Z0-9_]/g,
                   ""
                 )
+                .toLowerCase()
             : `google_${googleId.slice(
                 0,
                 8
               )}`;
 
-
         if (
           !username ||
-          username.length < 3
+          username.length < 3 ||
+          username === "admin"
         ) {
           username =
             `google_${googleId.slice(
@@ -1259,13 +1506,10 @@ app.post(
             )}`;
         }
 
-
         const originalUsername =
           username;
 
-
         let counter = 1;
-
 
         while (
           db
@@ -1276,20 +1520,16 @@ app.post(
             `)
             .get(username)
         ) {
-
           username =
             `${originalUsername}${counter}`;
 
           counter++;
-
         }
-
 
         const result =
           db
             .prepare(`
-              INSERT INTO users
-              (
+              INSERT INTO users (
                 username,
                 email,
                 name,
@@ -1306,156 +1546,147 @@ app.post(
               "google"
             );
 
-
         user =
           getUserById(
             result.lastInsertRowid
           );
-
       }
-
 
       const token =
         createToken(user);
-
 
       setAuthCookie(
         res,
         token
       );
 
-
-      res.json({
+      return res.json({
         user: {
           id: user.id,
-          username: user.username,
+          username:
+            user.username,
           email: user.email,
           name: user.name,
-          provider: user.provider,
+          provider:
+            user.provider,
         },
       });
-
     } catch (error) {
-
       console.error(
-        "Google login error:",
+        "GOOGLE LOGIN ERROR:",
         error
       );
 
-      res.status(401).json({
+      return res.status(401).json({
         error:
           "Google authentication failed",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// AUTH - ME
+// CURRENT USER
 // ============================================================
 
 app.get(
   "/api/auth/me",
   authenticate,
   (req, res) => {
-
     res.json({
       user: req.user,
     });
-
   }
 );
 
-
 // ============================================================
-// AUTH - LOGOUT
+// LOGOUT
 // ============================================================
 
 app.post(
   "/api/auth/logout",
   (req, res) => {
-
-    res.clearCookie(
-      "auth_token",
-      {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: false,
-      }
-    );
-
+    clearAuthCookie(res);
 
     res.json({
       message:
         "Logged out successfully",
     });
-
   }
 );
 
-
 // ============================================================
-// CHAT - CREATE
+// CREATE CHAT
 // ============================================================
 
-app.post("/api/chats", authenticate, (req, res) => {
-  try {
-    const { context = "" } = req.body;
+app.post(
+  "/api/chats",
+  authenticate,
+  (req, res) => {
+    try {
+      const {
+        context = "",
+      } = req.body || {};
 
-    const chatId = crypto.randomUUID();
+      const chatId =
+        generateId();
 
-    db.prepare(`
-      INSERT INTO chats (
-        id,
-        user_id,
-        title,
-        context,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(
-      chatId,
-      req.user.id,
-      "New conversation",
-      context
-    );
+      db.prepare(`
+        INSERT INTO chats (
+          id,
+          user_id,
+          title,
+          context,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+      `).run(
+        chatId,
+        req.user.id,
+        "New conversation",
+        context
+      );
 
-    const chat = db.prepare(`
-      SELECT
-        id,
-        title,
-        context,
-        created_at,
-        updated_at
-      FROM chats
-      WHERE id = ? AND user_id = ?
-    `).get(chatId, req.user.id);
+      const chat =
+        getUserChat(
+          chatId,
+          req.user.id
+        );
 
-    res.status(201).json(chat);
-  } catch (error) {
-    console.error("CREATE CHAT ERROR:", error);
+      return res.status(201).json(
+        chat
+      );
+    } catch (error) {
+      console.error(
+        "CREATE CHAT ERROR:",
+        error
+      );
 
-    res.status(500).json({
-      error: error.message || "Failed to create chat"
-    });
+      return res.status(500).json({
+        error:
+          "Failed to create chat",
+      });
+    }
   }
-});
+);
 
 // ============================================================
-// CHAT - GET ALL
+// GET ALL CHATS
 // ============================================================
 
 app.get(
   "/api/chats",
   authenticate,
   (req, res) => {
-
     try {
-
       const chats =
         db
           .prepare(`
@@ -1467,51 +1698,41 @@ app.get(
               updated_at
             FROM chats
             WHERE user_id = ?
-            ORDER BY
-              updated_at DESC
+            ORDER BY updated_at DESC
           `)
           .all(
             req.user.id
           );
 
-
-      res.json(chats);
-
+      return res.json(chats);
     } catch (error) {
-
       console.error(
-        "Get chats error:",
+        "GET CHATS ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load chats",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// CHAT - GET ONE
+// GET ONE CHAT
 // ============================================================
 
 app.get(
   "/api/chats/:chatId",
   authenticate,
   (req, res) => {
-
     try {
-
       const chat =
         getUserChat(
           req.params.chatId,
           req.user.id
         );
-
 
       if (!chat) {
         return res.status(404).json({
@@ -1519,54 +1740,44 @@ app.get(
             "Chat not found",
         });
       }
-
 
       const messages =
         getChatMessages(
           chat.id
         );
 
-
-      res.json({
+      return res.json({
         chat,
         messages,
       });
-
     } catch (error) {
-
       console.error(
-        "Get chat error:",
+        "GET CHAT ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load chat",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// CHAT - DELETE
+// DELETE CHAT
 // ============================================================
 
 app.delete(
   "/api/chats/:chatId",
   authenticate,
   (req, res) => {
-
     try {
-
       const chat =
         getUserChat(
           req.params.chatId,
           req.user.id
         );
-
 
       if (!chat) {
         return res.status(404).json({
@@ -1575,14 +1786,10 @@ app.delete(
         });
       }
 
-
       db.prepare(`
         DELETE FROM messages
         WHERE chat_id = ?
-      `).run(
-        chat.id
-      );
-
+      `).run(chat.id);
 
       db.prepare(`
         DELETE FROM chats
@@ -1593,39 +1800,32 @@ app.delete(
         req.user.id
       );
 
-
-      res.json({
+      return res.json({
         message:
           "Chat deleted successfully",
       });
-
     } catch (error) {
-
       console.error(
-        "Delete chat error:",
+        "DELETE CHAT ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to delete chat",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// AI - GENERATE FIRST RESPONSE
+// FIRST AI RESPONSE
 // ============================================================
 
 async function generateFirstResponse({
   text,
   images,
 }) {
-
   const systemPrompt = `
 You are the AI assistant inside a personal AI chat application.
 
@@ -1653,16 +1853,14 @@ Rules:
 - Never ask the user for context.
 - Infer the title and context automatically.
 - Answer the user's actual question normally.
-- Do not include markdown code fences around the JSON.
+- Do not put the JSON inside markdown code fences.
 `;
-
 
   const userContent =
     buildUserContent(
       text,
       images
     );
-
 
   const response =
     await client.chat.completions.create({
@@ -1671,21 +1869,21 @@ Rules:
       messages: [
         {
           role: "system",
-          content: systemPrompt,
+          content:
+            systemPrompt,
         },
-
         {
           role: "user",
-          content: userContent,
+          content:
+            userContent,
         },
       ],
     });
 
-
   const raw =
-    response?.choices?.[0]
+    response
+      ?.choices?.[0]
       ?.message?.content;
-
 
   if (!raw) {
     throw new Error(
@@ -1693,10 +1891,8 @@ Rules:
     );
   }
 
-
   const parsed =
     parseJsonResponse(raw);
-
 
   return {
     title:
@@ -1711,12 +1907,10 @@ Rules:
       parsed.answer ||
       raw,
   };
-
 }
 
-
 // ============================================================
-// AI - NORMAL RESPONSE
+// NORMAL AI RESPONSE
 // ============================================================
 
 async function generateNormalResponse({
@@ -1725,7 +1919,6 @@ async function generateNormalResponse({
   text,
   images,
 }) {
-
   const systemPrompt = `
 You are the AI assistant inside a personal AI chat application.
 
@@ -1748,28 +1941,27 @@ Important:
 - Do not ask for a conversation title or context.
 `;
 
-
   const userContent =
     buildUserContent(
       text,
       images
     );
 
-
   const messages = [
     {
       role: "system",
-      content: systemPrompt,
+      content:
+        systemPrompt,
     },
 
     ...history,
 
     {
       role: "user",
-      content: userContent,
+      content:
+        userContent,
     },
   ];
-
 
   const response =
     await client.chat.completions.create({
@@ -1777,11 +1969,10 @@ Important:
       messages,
     });
 
-
   const answer =
-    response?.choices?.[0]
+    response
+      ?.choices?.[0]
       ?.message?.content;
-
 
   if (!answer) {
     throw new Error(
@@ -1789,34 +1980,28 @@ Important:
     );
   }
 
-
   return answer;
-
 }
 
-
 // ============================================================
-// CHAT MESSAGE
+// SEND MESSAGE
 // ============================================================
 
 app.post(
   "/api/chats/:chatId/message",
   authenticate,
   async (req, res) => {
-
     try {
-
       const {
         message = "",
         images = [],
-      } = req.body;
-
+      } = req.body || {};
 
       const text =
-        typeof message === "string"
+        typeof message ===
+        "string"
           ? message.trim()
           : "";
-
 
       const validImages =
         Array.isArray(images)
@@ -1835,27 +2020,15 @@ app.post(
               )
           : [];
 
-
-      // -------------------------------------------------------
-      // VALIDATION
-      // -------------------------------------------------------
-
       if (
         !text &&
         validImages.length === 0
       ) {
-
         return res.status(400).json({
           error:
             "Message or image is required",
         });
-
       }
-
-
-      // -------------------------------------------------------
-      // VERIFY CHAT OWNERSHIP
-      // -------------------------------------------------------
 
       const chat =
         getUserChat(
@@ -1863,50 +2036,32 @@ app.post(
           req.user.id
         );
 
-
       if (!chat) {
-
         return res.status(404).json({
           error:
             "Chat not found",
         });
-
       }
-
-
-      // -------------------------------------------------------
-      // GET HISTORY
-      // -------------------------------------------------------
 
       const storedMessages =
         getChatMessages(
           chat.id
         );
 
-
       const history =
         storedMessages
           .slice(-MAX_HISTORY)
-          .map(
-            (item) => ({
-              role: item.role,
-              content: item.content,
-            })
-          );
+          .map((item) => ({
+            role: item.role,
+            content:
+              item.content,
+          }));
 
-
-      // -------------------------------------------------------
-      // SAVE USER MESSAGE
-      // -------------------------------------------------------
-      //
-      // IMPORTANT:
-      // We do NOT save base64 images.
-      //
-
+      // Do NOT save base64 image
+      // data into database.
       const savedUserContent =
         text ||
         "[Image uploaded]";
-
 
       const userMessageId =
         saveMessage(
@@ -1915,33 +2070,21 @@ app.post(
           savedUserContent
         );
 
-
-      // -------------------------------------------------------
-      // FIRST MESSAGE
-      // -------------------------------------------------------
+      const isFirstMessage =
+        storedMessages.length ===
+        0;
 
       let answer;
-
-      let title =
-        chat.title;
-
-      let context =
-        chat.context;
-
-
-      const isFirstMessage =
-        storedMessages.length === 0;
-
+      let title = chat.title;
+      let context = chat.context;
 
       if (isFirstMessage) {
-
         const result =
           await generateFirstResponse({
             text,
             images:
               validImages,
           });
-
 
         answer =
           result.answer;
@@ -1952,29 +2095,20 @@ app.post(
         context =
           result.context;
 
-
         db.prepare(`
           UPDATE chats
           SET
             title = ?,
             context = ?,
-            updated_at = CURRENT_TIMESTAMP
+            updated_at =
+              CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(
           title,
           context,
           chat.id
         );
-
-      }
-
-
-      // -------------------------------------------------------
-      // NORMAL MESSAGE
-      // -------------------------------------------------------
-
-      else {
-
+      } else {
         answer =
           await generateNormalResponse({
             chat,
@@ -1983,13 +2117,7 @@ app.post(
             images:
               validImages,
           });
-
       }
-
-
-      // -------------------------------------------------------
-      // SAVE AI RESPONSE
-      // -------------------------------------------------------
 
       const assistantMessageId =
         saveMessage(
@@ -1998,46 +2126,28 @@ app.post(
           answer
         );
 
-
-      // -------------------------------------------------------
-      // RESPONSE
-      // -------------------------------------------------------
-
-      res.json({
-
+      return res.json({
         answer,
-
         title,
-
         context,
-
         userMessageId,
-
         assistantMessageId,
-
         source: "ai",
-
       });
-
     } catch (error) {
-
       console.error(
-        "Message error:",
+        "MESSAGE ERROR:",
         error
       );
 
-
-      res.status(500).json({
+      return res.status(500).json({
         error:
           error?.message ||
           "Failed to process message",
       });
-
     }
-
   }
 );
-
 
 // ============================================================
 // TRANSLATION
@@ -2047,27 +2157,21 @@ app.post(
   "/api/translate",
   authenticate,
   async (req, res) => {
-
     try {
-
       const {
         text,
         language,
-      } = req.body;
-
+      } = req.body || {};
 
       if (
         !text ||
         !language
       ) {
-
         return res.status(400).json({
           error:
             "Text and language are required",
         });
-
       }
-
 
       const response =
         await client.chat.completions.create({
@@ -2076,7 +2180,6 @@ app.post(
           messages: [
             {
               role: "system",
-
               content: `
 Translate the provided text into ${language}.
 
@@ -2091,52 +2194,41 @@ Preserve:
 Return only the translated text.
 `,
             },
-
             {
               role: "user",
-
               content: text,
             },
           ],
         });
 
-
       const translation =
-        response?.choices?.[0]
+        response
+          ?.choices?.[0]
           ?.message?.content;
 
-
       if (!translation) {
-
         throw new Error(
           "Translation returned an empty response."
         );
-
       }
 
-
-      res.json({
+      return res.json({
         translation,
       });
-
     } catch (error) {
-
       console.error(
-        "Translation error:",
+        "TRANSLATION ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           error?.message ||
           "Translation failed",
       });
-
     }
-
   }
 );
-
 
 // ============================================================
 // CODE CONVERSION
@@ -2146,28 +2238,22 @@ app.post(
   "/api/convert-code",
   authenticate,
   async (req, res) => {
-
     try {
-
       const {
         code,
         fromLanguage,
         toLanguage,
-      } = req.body;
-
+      } = req.body || {};
 
       if (
         !code ||
         !toLanguage
       ) {
-
         return res.status(400).json({
           error:
             "Code and target language are required",
         });
-
       }
-
 
       const response =
         await client.chat.completions.create({
@@ -2176,7 +2262,6 @@ app.post(
           messages: [
             {
               role: "system",
-
               content: `
 You are an expert programmer.
 
@@ -2191,88 +2276,142 @@ Do not add explanations.
 Do not add markdown fences.
 `,
             },
-
             {
               role: "user",
-
               content: code,
             },
           ],
         });
 
-
       const converted =
-        response?.choices?.[0]
+        response
+          ?.choices?.[0]
           ?.message?.content;
 
-
       if (!converted) {
-
         throw new Error(
           "Code conversion returned an empty response."
         );
-
       }
 
-
-      res.json({
+      return res.json({
         code:
           cleanAiText(
             converted
           ),
       });
-
     } catch (error) {
-
       console.error(
-        "Code conversion error:",
+        "CODE CONVERSION ERROR:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           error?.message ||
           "Code conversion failed",
       });
-
     }
-
   }
 );
 
-
 // ============================================================
-// HEALTH
+// HEALTH CHECK
 // ============================================================
 
 app.get(
   "/api/health",
   (req, res) => {
-
     res.json({
       status: "ok",
       model: MODEL,
       database: "SQLite",
+      databasePath: DB_PATH,
+      environment: NODE_ENV,
     });
-
   }
 );
 
+// ============================================================
+// 404
+// ============================================================
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      error:
+        "API route not found",
+    });
+  }
+);
+
+// ============================================================
+// GLOBAL ERROR HANDLER
+// ============================================================
+
+app.use(
+  (error, req, res, next) => {
+    console.error(
+      "GLOBAL ERROR:",
+      error
+    );
+
+    res.status(500).json({
+      error:
+        "Internal server error",
+    });
+  }
+);
 
 // ============================================================
 // START SERVER
 // ============================================================
 
 async function startServer() {
+  try {
+    await createDefaultAdmin();
 
-  await createDefaultAdmin();
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log(
+          "======================================"
+        );
 
-  const PORT = process.env.PORT || 5000;
+        console.log(
+          `🚀 Server running on port ${PORT}`
+        );
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
+        console.log(
+          `🌐 Frontend: ${FRONTEND_URL}`
+        );
 
+        console.log(
+          `🤖 Model: ${MODEL}`
+        );
+
+        console.log(
+          `💾 Database: ${DB_PATH}`
+        );
+
+        console.log(
+          `🔐 Environment: ${NODE_ENV}`
+        );
+
+        console.log(
+          "======================================"
+        );
+      }
+    );
+  } catch (error) {
+    console.error(
+      "❌ SERVER START ERROR:",
+      error
+    );
+
+    process.exit(1);
+  }
 }
 
 startServer();

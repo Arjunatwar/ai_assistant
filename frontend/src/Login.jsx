@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./Login.css";
 
-const API = "http://localhost:5000";
+const API = import.meta.env.VITE_API_URL;
+
+if (!API) {
+  console.warn("VITE_API_URL is missing from the frontend environment.");
+}
 
 const Login = ({ onLogin }) => {
   const [mode, setMode] = useState("login");
