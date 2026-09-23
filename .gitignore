@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Build files
+dist/
+build/
+.vite/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Deployment
+.netlify/
+.vercel/

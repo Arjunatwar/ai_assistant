@@ -1,0 +1,626 @@
+/* ========================================
+   LOGIN / AUTH PAGE
+======================================== */
+
+.login-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: #0b0b0f;
+  color: #ffffff;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  background: #15151c;
+  border: 1px solid #2b2b35;
+  border-radius: 18px;
+  padding: 34px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+/* ========================================
+   HEADER
+======================================== */
+
+.login-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.login-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.login-header p {
+  margin: 8px 0 0;
+  color: #8f8f9b;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ========================================
+   FORM
+======================================== */
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.input-group label {
+  color: #c8c8d0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ========================================
+   INPUTS
+======================================== */
+
+.login-card input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 15px;
+  background: #0f0f14;
+  color: #ffffff;
+  border: 1px solid #34343f;
+  border-radius: 8px;
+  outline: none;
+  font-size: 15px;
+  transition: 0.2s ease;
+}
+
+.login-card input::placeholder {
+  color: #777783;
+}
+
+.login-card input:focus {
+  border-color: #637cff;
+  box-shadow: 0 0 0 3px rgba(99, 124, 255, 0.12);
+}
+
+/* ========================================
+   PRIMARY BUTTON
+======================================== */
+
+.primary-button {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  background: #637cff;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.primary-button:hover {
+  background: #526df5;
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Support the auth-button class
+   used by the newer JSX */
+
+.auth-button {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  background: #637cff;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.auth-button:hover {
+  background: #526df5;
+}
+
+.auth-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ========================================
+   ERRORS
+======================================== */
+
+.login-error,
+.auth-error {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(255, 70, 70, 0.1);
+  border: 1px solid rgba(255, 70, 70, 0.25);
+  color: #ff7070;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ========================================
+   SUCCESS
+======================================== */
+
+.auth-success {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  color: #4ade80;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ========================================
+   FORGOT PASSWORD
+======================================== */
+
+.forgot-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+
+.forgot-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #7187ff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.forgot-button:hover {
+  color: #91a0ff;
+  text-decoration: underline;
+}
+
+/* ========================================
+   SECONDARY BUTTON
+======================================== */
+
+.secondary-button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px;
+  border-radius: 8px;
+  border: 1px solid #34343f;
+  background: transparent;
+  color: #aaaab4;
+  cursor: pointer;
+  font-size: 14px;
+  transition: 0.2s ease;
+}
+
+.secondary-button:hover {
+  background: #1f1f27;
+  color: #ffffff;
+  border-color: #444450;
+}
+
+/* ========================================
+   DIVIDER
+======================================== */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 25px 0;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: #30303a;
+}
+
+.divider span {
+  color: #777783;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* If your old JSX uses <p> inside divider */
+
+.divider p {
+  margin: 0;
+  color: #777783;
+  font-size: 12px;
+}
+
+/* ========================================
+   GOOGLE LOGIN
+======================================== */
+
+.google-button-container {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ========================================
+   AUTH FOOTER
+======================================== */
+
+.switch-auth,
+.auth-footer {
+  margin-top: 25px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #777783;
+}
+
+.switch-auth button,
+.link-button {
+  border: none;
+  background: none;
+  color: #7187ff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0;
+  transition: 0.2s ease;
+}
+
+.switch-auth button:hover,
+.link-button:hover {
+  color: #91a0ff;
+  text-decoration: underline;
+}
+
+/* ========================================
+   AUTH CARD SUPPORT
+======================================== */
+
+/* Supports the newer JSX class names too */
+
+.auth-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: #0b0b0f;
+  color: #ffffff;
+  padding: 20px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  box-sizing: border-box;
+  background: #15151c;
+  border: 1px solid #2b2b35;
+  border-radius: 18px;
+  padding: 34px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.auth-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.auth-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.auth-header p {
+  margin: 8px 0 0;
+  color: #8f8f9b;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ========================================
+   RESPONSIVE
+======================================== */
+
+@media (max-width: 500px) {
+  .login-page,
+  .auth-page {
+    padding: 15px;
+    align-items: center;
+  }
+
+  .login-card,
+  .auth-card {
+    padding: 25px 20px;
+    border-radius: 15px;
+  }
+
+  .login-header h1,
+  .auth-header h1 {
+    font-size: 25px;
+  }
+
+  .login-header p,
+  .auth-header p {
+    font-size: 14px;
+  }
+
+  .login-card input,
+  .auth-card input {
+    padding: 13px 14px;
+  }
+
+  .primary-button,
+  .auth-button {
+    padding: 13px;
+  }
+}
+
+@media (max-width: 350px) {
+  .login-card,
+  .auth-card {
+    padding: 22px 16px;
+  }
+
+  .login-header h1,
+  .auth-header h1 {
+    font-size: 23px;
+  }
+}
+.password-input-wrapper {
+  position: relative;
+  width: 100%;
+  display: block;
+}
+
+.password-input-wrapper input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 48px 14px 15px;
+  background: #0f0f14;
+  color: #ffffff;
+  border: 1px solid #34343f;
+  border-radius: 8px;
+  outline: none;
+  font-size: 15px;
+  transition: 0.2s ease;
+}
+
+.password-input-wrapper input::placeholder {
+  color: #777783;
+}
+
+.password-input-wrapper input:focus {
+  border-color: #637cff;
+  box-shadow: 0 0 0 3px rgba(99, 124, 255, 0.12);
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+
+  width: 32px;
+  height: 32px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+
+  background: transparent;
+  color: #8f8f9b;
+
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.password-toggle:hover {
+  background: #1f1f27;
+  color: #ffffff;
+}
+/* ========================================
+   INPUT GROUPS
+======================================== */
+
+.input-group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.input-group label {
+  color: #c8c8d0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ========================================
+   ALL TEXT INPUTS
+======================================== */
+
+.login-card input,
+.auth-card input {
+  width: 100%;
+  height: 48px;
+  box-sizing: border-box;
+
+  padding: 0 15px;
+
+  background: #0f0f14;
+  color: #ffffff;
+
+  border: 1px solid #34343f;
+  border-radius: 9px;
+
+  outline: none;
+
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 48px;
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.login-card input::placeholder,
+.auth-card input::placeholder {
+  color: #777783;
+  opacity: 1;
+}
+
+.login-card input:hover,
+.auth-card input:hover {
+  border-color: #444450;
+}
+
+.login-card input:focus,
+.auth-card input:focus {
+  border-color: #637cff;
+  background: #111119;
+  box-shadow: 0 0 0 3px rgba(99, 124, 255, 0.12);
+}
+
+/* ========================================
+   PASSWORD INPUT
+======================================== */
+
+.password-input-wrapper {
+  position: relative;
+  width: 100%;
+  display: block;
+}
+
+.password-input-wrapper input {
+  width: 100%;
+  height: 48px;
+  box-sizing: border-box;
+
+  padding: 0 48px 0 15px;
+
+  background: #0f0f14;
+  color: #ffffff;
+
+  border: 1px solid #34343f;
+  border-radius: 9px;
+
+  outline: none;
+
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 48px;
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.password-input-wrapper input:focus {
+  border-color: #637cff;
+  background: #111119;
+  box-shadow: 0 0 0 3px rgba(99, 124, 255, 0.12);
+}
+
+/* ========================================
+   SHOW / HIDE PASSWORD
+======================================== */
+
+.password-toggle {
+  position: absolute;
+
+  top: 50%;
+  right: 8px;
+
+  transform: translateY(-50%);
+
+  width: 34px;
+  height: 34px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0;
+
+  border: none;
+  border-radius: 7px;
+
+  background: transparent;
+  color: #8f8f9b;
+
+  cursor: pointer;
+
+  font-size: 16px;
+  line-height: 1;
+
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.password-toggle:hover {
+  background: #1f1f27;
+  color: #ffffff;
+}
+
+/* ========================================
+   MOBILE
+======================================== */
+
+@media (max-width: 500px) {
+  .login-card input,
+  .auth-card input,
+  .password-input-wrapper input {
+    height: 46px;
+    font-size: 14px;
+  }
+}
