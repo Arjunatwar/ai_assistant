@@ -5,7 +5,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://YOUR-FRONTEND.netlify.app"
+      "https://aiaissistant.netlify.app"
     ],
     credentials: true
   })
